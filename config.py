@@ -1,6 +1,6 @@
 import pytz
 
-API_TOKEN = "7945563947:AAFGYVUKB4GznTGH3ZTGmdfJEvX4UATkFIk"
+API_TOKEN = "7945563947:AVUKB4G3ZTGmdfJEvX4UAT"
 ADMIN_ID = 123456789
 SPECIALISTS = {
     5049932818: {"name": "Специалист 1", "username": "@tech_support1"},
