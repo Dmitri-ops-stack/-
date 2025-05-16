@@ -1,81 +1,50 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Enum, Boolean, Float
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import relationship
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import sessionmaker
-import enum
-from datetime import datetime
-from config import DB_URL
+from sqlalchemy.orm import sessionmaker, declarative_base
+from config import config
 
+# Создание асинхронного движка с оптимизированным пулом
+engine = create_async_engine(
+    config.DATABASE_URL,
+    echo=True,
+    pool_size=1,  # Ограничение для SQLite (одно соединение для записи)
+    max_overflow=0,  # Без переполнения
+    pool_timeout=30.0,  # Таймаут ожидания подключения
+    pool_pre_ping=True,  # Проверка соединения перед использованием
+)
+
+# Создание декларативной базы
 Base = declarative_base()
-engine = create_async_engine(DB_URL, echo=True)
-AsyncSessionMaker = sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 
-class StatusEnum(enum.Enum):
-    pending = "pending"
-    approved = "approved"
-    completed = "completed"
-    canceled = "canceled"
+# Создание фабрики сессий
+async_session = sessionmaker(
+    engine,
+    class_=AsyncSession,
+    expire_on_commit=False
+)
 
-class ClientStatus(enum.Enum):
-    active = "active"
-    blacklisted = "blacklisted"
+# Функция для миддлварей (генератор)
+async def get_session():
+    async with async_session() as session:
+        yield session
 
-class Client(Base):
-    __tablename__ = 'clients'
-    id = Column(Integer, primary_key=True)
-    telegram_id = Column(Integer, unique=True)
-    name = Column(String)
-    city = Column(String)
-    workplace = Column(String)
-    product_type = Column(String)
-    serial_number = Column(String)
-    phone = Column(String)
-    status = Column(Enum(ClientStatus), default=ClientStatus.active)
-    rating = Column(Float, default=0.0)
-    ratings_count = Column(Integer, default=0)
-    appointments = relationship("Appointment", back_populates="client")
+# Класс-обёртка для поддержки async with
+class SessionContext:
+    def __init__(self):
+        self.session = None
 
-class Specialist(Base):
-    __tablename__ = 'specialists'
-    id = Column(Integer, primary_key=True)
-    telegram_id = Column(Integer, unique=True)
-    name = Column(String)
-    username = Column(String)
-    is_available = Column(Boolean, default=True)
-    appointments = relationship("Appointment", back_populates="specialist")
+    async def __aenter__(self):
+        self.session = async_session()
+        return self.session
 
-class Appointment(Base):
-    __tablename__ = 'appointments'
-    id = Column(Integer, primary_key=True)
-    client_id = Column(Integer, ForeignKey('clients.id'))
-    specialist_id = Column(Integer, ForeignKey('specialists.id'))
-    date = Column(DateTime)
-    created_at = Column(DateTime, default=datetime.now)
-    status = Column(Enum(StatusEnum), default=StatusEnum.pending)
-    description = Column(String)
-    client_approved = Column(Boolean)
-    specialist_approved = Column(Boolean)
-    decline_reason = Column(String)
-    client = relationship("Client", back_populates="appointments")
-    specialist = relationship("Specialist", back_populates="appointments")
+    async def __aexit__(self, exc_type, exc, tb):
+        if exc_type is not None:
+            await self.session.rollback()  # Откат при исключении
+        await self.session.close()
 
-class Blacklist(Base):
-    __tablename__ = 'blacklist'
-    id = Column(Integer, primary_key=True)
-    client_id = Column(Integer, ForeignKey('clients.id'))
-    until = Column(DateTime)
-    created_at = Column(DateTime, default=datetime.now)
+# Функция для создания сессии, совместимой с async with
+def create_session():
+    return SessionContext()
 
-class Rating(Base):
-    __tablename__ = 'ratings'
-    id = Column(Integer, primary_key=True)
-    client_id = Column(Integer, ForeignKey('clients.id'))
-    specialist_id = Column(Integer, ForeignKey('specialists.id'))
-    score = Column(Integer)
-    comment = Column(String)
-    created_at = Column(DateTime, default=datetime.now)
-
-async def init_db():
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+# Функция для закрытия движка
+async def dispose_engine():
+    await engine.dispose()

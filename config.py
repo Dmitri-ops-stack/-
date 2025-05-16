@@ -1,11 +1,58 @@
+import os
+from dotenv import load_dotenv
+from aiogram.fsm.storage.memory import MemoryStorage
+from datetime import datetime
 import pytz
+import logging
 
-API_TOKEN = "VUKB4G3ZTGmdfJEvX4UAT"
-ADMIN_ID = 123456789
-SPECIALISTS = {
-    : {"name": "Специалист 1", "username": "@tech_support1"},
-    : {"name": "Специалист 2", "username": "@tech_support2"}
-}
-TIMEZONE = pytz.timezone('Europe/Moscow')
-DB_URL = "sqlite+aiosqlite:///database.db"
-CODEWORD = "SECURE123"
+# Загрузка переменных окружения из .env
+load_dotenv()
+
+# Добавим логирование для отладки
+logger = logging.getLogger(__name__)
+
+class Config:
+    """Класс конфигурации для хранения настроек бота."""
+    def __init__(self):
+        # Обязательные переменные окружения
+        self.BOT_TOKEN = os.getenv("BOT_TOKEN")
+        if not self.BOT_TOKEN:
+            raise ValueError("BOT_TOKEN is not set in .env")
+
+        admin_id = os.getenv("ADMIN_ID")
+        if not admin_id or not admin_id.isdigit():
+            raise ValueError("ADMIN_ID must be a valid integer in .env")
+        self.ADMIN_ID = int(admin_id)
+
+        self.CODE_WORD = os.getenv("CODE_WORD")
+        if not self.CODE_WORD:
+            raise ValueError("CODE_WORD is not set in .env")
+
+        # Добавляем DATABASE_URL для работы с базой данных
+        self.DATABASE_URL = "sqlite+aiosqlite:///bot.db"
+
+        # Настройки рабочего времени
+        self.WORK_HOURS = {
+            "start": 9,
+            "end": 18,
+            "lunch_start": 12,
+            "lunch_end": 14
+        }
+        self.TIMEZONE = pytz.timezone("Europe/Moscow")  # Используем pytz.timezone
+
+    def validate(self):
+        """Проверка корректности настроек."""
+        if not (0 <= self.WORK_HOURS["start"] < self.WORK_HOURS["end"] <= 24):
+            raise ValueError("Invalid work hours configuration")
+        if not (self.WORK_HOURS["start"] <= self.WORK_HOURS["lunch_start"] < self.WORK_HOURS["lunch_end"] <= self.WORK_HOURS["end"]):
+            raise ValueError("Invalid lunch hours configuration")
+
+# Создание объекта конфигурации и валидация
+config = Config()
+config.validate()
+
+# Настройка хранилища FSM
+storage = MemoryStorage()
+
+# Логируем загруженные значения
+logger.info(f"Loaded config: BOT_TOKEN={config.BOT_TOKEN}, ADMIN_ID={config.ADMIN_ID}, CODE_WORD={config.CODE_WORD}")
