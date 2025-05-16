@@ -164,10 +164,10 @@ async def process_body_part(callback: CallbackQuery, state: FSMContext):
     await state.update_data(body_part=body_part)
     if body_part == "active":
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="МоМ", callback_data="complex:Эко-М")],
-            [InlineKeyboardButton(text="Мод(01,02,07)", callback_data="complex:Модуль")],
-            [InlineKeyboardButton(text="РК01", callback_data="complex:РК-01")],
-            [InlineKeyboardButton(text="ЭкоН", callback_data="complex:ЭкоН")]
+            [InlineKeyboardButton(text="Мо", callback_data="complex:Эк")],
+            [InlineKeyboardButton(text="Мо)", callback_data="complex:Мо")],
+            [InlineKeyboardButton(text="РК", callback_data="complex:Р")],
+            [InlineKeyboardButton(text="Эк", callback_data="complex:Э")]
         ])
         await callback.message.edit_text("Выберите комплекс:", reply_markup=keyboard)
         await state.set_state(ClientStates.choose_complex)
