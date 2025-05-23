@@ -11,25 +11,7 @@ load_dotenv()
 # Добавим логирование для отладки
 logger = logging.getLogger(__name__)
 
-class Config:
-    """Класс конфигурации для хранения настроек бота."""
-    def __init__(self):
-        # Обязательные переменные окружения
-        self.BOT_TOKEN = os.getenv("BOT_TOKEN")
-        if not self.BOT_TOKEN:
-            raise ValueError("BOT_TOKEN is not set in .env")
 
-        admin_id = os.getenv("ADMIN_ID")
-        if not admin_id or not admin_id.isdigit():
-            raise ValueError("ADMIN_ID must be a valid integer in .env")
-        self.ADMIN_ID = int(admin_id)
-
-        self.CODE_WORD = os.getenv("CODE_WORD")
-        if not self.CODE_WORD:
-            raise ValueError("CODE_WORD is not set in .env")
-
-        # Добавляем DATABASE_URL для работы с базой данных
-        self.DATABASE_URL = "sqlite+aiosqlite:///bot.db"
 
         # Настройки рабочего времени
         self.WORK_HOURS = {
