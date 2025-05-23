@@ -3,35 +3,7 @@ from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile
 from aiogram.fsm.context import FSMContext
 from sqlalchemy.ext.asyncio import AsyncSession
-from database.models import Role, Appointment, AppointmentStatus, Specialist, User
-from database.crud import CRUD
-from config import config
-from keyboards import get_admin_keyboard, get_admin_inline_keyboard, get_time_selection_keyboard, get_appointment_actions_keyboard
-from utils.states import AdminStates
-from datetime import datetime
-import logging
-from aiogram.exceptions import TelegramBadRequest
-from utils.utils import export_appointments_to_csv
-import os
-from services.notifications import notify_client_approved, notify_specialist, notify_client_reassigned
-
-logger = logging.getLogger(__name__)
-
-router = Router()
-
-def escape_markdown_v2(text: any) -> str:
-    """Escape special characters for Telegram MarkdownV2, handling None or non-string inputs."""
-    if text is None:
-        return ""
-    text = str(text)
-    chars_to_escape = r'_*[]()~`#+-=|{}.!'
-    for char in chars_to_escape:
-        text = text.replace(char, f'\\{char}')
-    return text
-
-@router.message(Command("admin"))
-async def cmd_admin(message: Message, session: AsyncSession):
-    telegram_id = message.from_user.id
+from database.
     crud = CRUD(session)
     user = await crud.get_user(str(telegram_id))
     if not user or user.role != Role.ADMIN:
@@ -47,14 +19,6 @@ async def show_statistics(message: Message, session: AsyncSession):
     if not user or user.role != Role.ADMIN:
         await message.answer("У вас нет прав администратора!")
         return
-    total_clients = await crud.get_total_clients()
-    approved_appointments = await crud.get_approved_appointments_count()
-    specialists = await crud.get_all_specialists()
-    response = (
-        f"<b>Статистика:</b>\n\n"
-        f"Всего клиентов: {total_clients}\n"
-        f"Активных заявок: {approved_appointments}\n\n"
-        f"<b>Специалисты:</b>\n\n"
     )
     for spec in specialists:
         response += (
@@ -79,29 +43,6 @@ async def show_appointments(message: Message, state: FSMContext, session: AsyncS
         return
     APPOINTMENTS_PER_PAGE = 5
     page = 0
-    total_pages = (len(appointments) + APPOINTMENTS_PER_PAGE - 1) // APPOINTMENTS_PER_PAGE
-
-    def get_appointments_page(page: int) -> tuple[str, InlineKeyboardMarkup]:
-        start_idx = page * APPOINTMENTS_PER_PAGE
-        end_idx = min(start_idx + APPOINTMENTS_PER_PAGE, len(appointments))
-        response = f"<b>Запланированные заявки (Страница {page + 1}/{total_pages}):</b>\n\n"
-        buttons = []
-        for app in appointments[start_idx:end_idx]:
-            status = app.status.value
-            date = app.proposed_date.astimezone(config.TIMEZONE).strftime("%d.%m.%Y")
-            scheduled_time = app.scheduled_time.astimezone(config.TIMEZONE).strftime(
-                "%H:%M") if app.scheduled_time else "Не назначено"
-            specialist = app.specialist.full_name if app.specialist else "Не назначен"
-            reason = app.reason[:100] + "..." if len(app.reason) > 100 else app.reason
-            response += (
-                f"Заявка #{app.id}\n"
-                f"Клиент: {app.client.full_name}\n"
-                f"Дата: {date}\n"
-                f"Время: {scheduled_time}\n"
-                f"Специалист: {specialist}\n"
-                f"Статус: {status}\n"
-                f"Причина: {reason}\n\n"
-            )
             if app.status != AppointmentStatus.CANCELED:
                 buttons.append(
                     [InlineKeyboardButton(text="❌ Отменить", callback_data=f"cancel_appointment_{app.id}")]
@@ -161,29 +102,7 @@ async def paginate_appointments(callback: CallbackQuery, state: FSMContext, sess
             nav_buttons.append(InlineKeyboardButton(text="Вперёд ➡️", callback_data=f"appointments_page_{page + 1}"))
         if nav_buttons:
             buttons.append(nav_buttons)
-        buttons.append([InlineKeyboardButton(text="Назад в меню", callback_data="back_to_menu")])
-        return response, InlineKeyboardMarkup(inline_keyboard=buttons)
-
-    response, keyboard = get_appointments_page(page)
-    await callback.message.edit_text(response, reply_markup=keyboard, parse_mode="HTML")
-    await callback.answer()
-
-@router.callback_query(F.data == "back_to_menu", AdminStates.view_appointments)
-async def back_to_menu(callback: CallbackQuery, state: FSMContext):
-    await callback.message.edit_text("Панель администратора:", reply_markup=get_admin_keyboard())
-    await state.clear()
-    await callback.answer()
-
-@router.message(F.text == "🔨 ЧС")
-async def show_blacklist(message: Message, session: AsyncSession):
-    telegram_id = message.from_user.id
-    crud = CRUD(session)
-    user = await crud.get_user(str(telegram_id))
-    if not user or user.role != Role.ADMIN:
-        await message.answer("У вас нет прав администратора!")
-        return
-    blacklist = await crud.get_blacklist()
-    if not blacklist:
+        butto
         await message.answer("Чёрный список пуст.", reply_markup=get_admin_keyboard())
         return
     response = "<b>Чёрный список:</b>\n\n"
@@ -224,33 +143,7 @@ async def add_to_blacklist(callback: CallbackQuery, state: FSMContext):
     await state.set_state(AdminStates.adding_to_blacklist)
 
 @router.message(AdminStates.adding_to_blacklist)
-async def process_add_to_blacklist(message: Message, state: FSMContext, session: AsyncSession):
-    telegram_id = message.text.strip()
-    crud = CRUD(session)
-    user = await crud.get_user(telegram_id)
-    if not user:
-        await message.answer("Пользователь не найден.", reply_markup=get_admin_keyboard())
-        await state.clear()
-        return
-    await state.update_data(blacklist_id=telegram_id)
-    await message.answer("Введите причину и длительность блокировки (в днях, например: 'Нарушение правил, 14'):")
-    await state.set_state(AdminStates.adding_to_blacklist_details)
-
-@router.message(AdminStates.adding_to_blacklist_details)
-async def process_blacklist_details(message: Message, state: FSMContext, session: AsyncSession):
-    try:
-        reason, duration = message.text.split(",", 1)
-        reason = reason.strip()
-        duration = int(duration.strip())
-    except ValueError:
-        await message.answer("Неверный формат. Введите причину и длительность (например: 'Нарушение правил, 14'):")
-        return
-    data = await state.get_data()
-    telegram_id = data["blacklist_id"]
-    crud = CRUD(session)
-    await crud.add_to_blacklist(telegram_id=telegram_id, reason=reason, duration_days=duration)
-    await message.answer(f"Пользователь {telegram_id} добавлен в ЧС на {duration} дней.",
-                         reply_markup=get_admin_keyboard())
+async def process_a
     await state.clear()
 
 @router.callback_query(F.data.startswith("remove_from_blacklist_"), AdminStates.blacklist_management)
@@ -262,25 +155,7 @@ async def remove_from_blacklist(callback: CallbackQuery, state: FSMContext, sess
         await callback.message.edit_text("Пользователь не найден в ЧС.", reply_markup=None)
         await state.clear()
         return
-    await session.delete(blacklist_entry)
-    await session.commit()
-    await callback.message.edit_text(f"Пользователь {telegram_id} удалён из ЧС.", reply_markup=None)
-    await state.clear()
-
-@router.message(F.text == "👥 Специалисты")
-async def manage_specialists(message: Message, session: AsyncSession):
-    telegram_id = message.from_user.id
-    crud = CRUD(session)
-    user = await crud.get_user(str(telegram_id))
-    if not user or user.role != Role.ADMIN:
-        await message.answer("У вас нет прав администратора!")
-        return
-    specialists = await crud.get_all_specialists()
-    response = "<b>Список специалистов:</b>\n\n"
-    for spec in specialists:
-        status = "🟢 Доступен" if spec.is_available else "🔴 Занят"
-        response += f"{spec.full_name} ({status})\n"
-    response += "\nВыберите действие:"
+    await session.de
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="Добавить специалиста", callback_data="add_specialist")],
         [InlineKeyboardButton(text="Удалить специалиста", callback_data="remove_specialist")]
@@ -313,21 +188,7 @@ async def add_specialist(callback: CallbackQuery, state: FSMContext, session: As
             nav_buttons.append(InlineKeyboardButton(text="⬅️ Назад", callback_data=f"page_{page - 1}"))
         if page < total_pages - 1:
             nav_buttons.append(InlineKeyboardButton(text="Вперёд ➡️", callback_data=f"page_{page + 1}"))
-        if nav_buttons:
-            buttons.append(nav_buttons)
-        buttons.append([InlineKeyboardButton(text="Отмена", callback_data="cancel_add_specialist")])
-        return InlineKeyboardMarkup(inline_keyboard=buttons)
-
-    keyboard = get_client_keyboard(page)
-    await callback.message.edit_text(
-        f"Выберите клиента для назначения специалистом (Страница {page + 1}/{total_pages}):",
-        reply_markup=keyboard
-    )
-    await state.update_data(total_pages=total_pages)
-    await state.set_state(AdminStates.add_specialist)
-
-@router.callback_query(F.data.startswith("page_"), AdminStates.add_specialist)
-async def paginate_clients(callback: CallbackQuery, state: FSMContext, session: AsyncSession):
+        if nav_buttons:session: AsyncSession):
     page = int(callback.data.split("_")[1])
     crud = CRUD(session)
     clients = await crud.get_all_clients()
@@ -360,20 +221,6 @@ async def paginate_clients(callback: CallbackQuery, state: FSMContext, session: 
         reply_markup=keyboard
     )
 
-@router.callback_query(F.data == "cancel_add_specialist", AdminStates.add_specialist)
-async def cancel_add_specialist(callback: CallbackQuery, state: FSMContext):
-    await callback.message.edit_text("Добавление специалиста отменено.", reply_markup=None)
-    await state.clear()
-
-@router.callback_query(F.data.startswith("select_client_"), AdminStates.add_specialist)
-async def select_client(callback: CallbackQuery, state: FSMContext, session: AsyncSession):
-    telegram_id = callback.data.split("_")[-1]
-    crud = CRUD(session)
-    user = await crud.get_user(telegram_id)
-    if not user or not user.client:
-        await callback.message.edit_text("Клиент не найден.", reply_markup=None)
-        await state.clear()
-        return
     if user.role != Role.CLIENT:
         await callback.message.edit_text(
             f"Пользователь {user.client.full_name} не может быть назначен специалистом (уже {user.role.value}).",
@@ -399,42 +246,7 @@ async def process_add_specialist_details(message: Message, state: FSMContext, se
     if username and not username.startswith("@"):
         await message.answer("Username должен начинаться с '@' (например: '@ivan'). Повторите ввод:")
         return
-    data = await state.get_data()
-    telegram_id = data["telegram_id"]
-    full_name = data["full_name"]
-    crud = CRUD(session)
-    user = await crud.get_user(telegram_id)
-    if not user:
-        await message.answer("Пользователь не найден.", reply_markup=get_admin_keyboard())
-        await state.clear()
-        return
-    client = await crud.get_client(telegram_id)
-    if not client:
-        await message.answer("Клиент не найден.", reply_markup=get_admin_keyboard())
-        await state.clear()
-        return
-    user.role = Role.SPECIALIST
-    await session.merge(user)
-    specialist = Specialist(
-        user_id=telegram_id,
-        full_name=full_name,
-        username=username or f"@{telegram_id}",
-        phone=client.phone,
-        is_available=True
-    )
-    try:
-        await crud.create_specialist(specialist)
-        await message.answer(f"Специалист {full_name} добавлен.", reply_markup=get_admin_keyboard())
-    except Exception as e:
-        logger.error(f"Failed to create specialist {telegram_id}: {e}")
-        await session.rollback()
-        await message.answer("Ошибка при добавлении специалиста. Попробуйте позже.", reply_markup=get_admin_keyboard())
-    finally:
-        await state.clear()
-
-@router.callback_query(F.data.startswith("no_username_"), AdminStates.adding_specialist_details)
-async def skip_username(callback: CallbackQuery, state: FSMContext, session: AsyncSession):
-    telegram_id = callback.data.split("_")[-1]
+    data = await state.get
     data = await state.get_data()
     full_name = data["full_name"]
     crud = CRUD(session)
